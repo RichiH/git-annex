@@ -7,10 +7,11 @@
 
 module Annex.Concurrent where
 
-import Common.Annex
+import Annex.Common
 import Annex
 import Annex.CatFile
 import Annex.CheckAttr
+import Annex.HashObject
 import Annex.CheckIgnore
 import qualified Annex.Queue
 
@@ -64,4 +65,5 @@ mergeState st = do
 	closehandles = do
 		catFileStop
 		checkAttrStop
+		hashObjectStop
 		checkIgnoreStop

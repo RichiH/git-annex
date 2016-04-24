@@ -1,7 +1,8 @@
 mans=$(shell find doc -maxdepth 1 -name git-annex*.mdwn | sed -e 's/^doc/man/' -e 's/\.mdwn/\.1/')
 all=git-annex mans docs
 
-CABAL?=cabal # set to "./Setup" if you lack a cabal program
+# set to "./Setup" if you lack a cabal program. Or can be set to "stack"
+BUILDER?=cabal
 GHC?=ghc
 
 PREFIX?=/usr
@@ -15,13 +16,20 @@ endif
 build: $(all)
 
 Build/SysConfig.hs: configure.hs Build/TestConfig.hs Build/Configure.hs
-	if [ "$(CABAL)" = ./Setup ]; then ghc --make Setup; fi
-	$(CABAL) configure --ghc-options="$(shell Build/collect-ghc-options.sh)"
+	if [ "$(BUILDER)" = ./Setup ]; then ghc --make Setup; fi
+	if [ "$(BUILDER)" = stack ]; then \
+		$(BUILDER) build $(BUILDEROPTIONS); \
+	else \
+		$(BUILDER) configure --ghc-options="$(shell Build/collect-ghc-options.sh)"; \
+	fi
 
-# -j1 is used for reproducible build
 git-annex: Build/SysConfig.hs
-	$(CABAL) build -j1
-	ln -sf dist/build/git-annex/git-annex git-annex
+	$(BUILDER) build $(BUILDEROPTIONS)
+	if [ "$(BUILDER)" = stack ]; then \
+		ln -sf $$(find .stack-work/ -name git-annex -type f | grep build/git-annex/git-annex | tail -n 1) git-annex; \
+	else \
+		ln -sf dist/build/git-annex/git-annex git-annex; \
+	fi
 
 man/%.1: doc/%.mdwn
 	./Build/mdwn2man $@ 1 $< > $@
@@ -89,6 +97,7 @@ docs: mans
 		--exclude='users/*' --exclude='devblog/*' --exclude='thanks'
 
 clean:
+	if [ "$(BUILDER)" != ./Setup ] && [ "$(BUILDER)" != cabal ]; then $(BUILDER) clean; fi
 	rm -rf tmp dist git-annex $(mans) configure  *.tix .hpc \
 		doc/.ikiwiki html dist tags Build/SysConfig.hs \
 		Setup Build/InstallDesktopFile Build/EvilSplicer \
@@ -126,7 +135,7 @@ linuxstandalone-nobuild: Build/Standalone Build/LinuxMkLibs
 	sed -i -e 's/^GIT_ANNEX_PACKAGE_INSTALL=/GIT_ANNEX_PACKAGE_INSTALL=$(GIT_ANNEX_PACKAGE_INSTALL)/' "$(LINUXSTANDALONE_DEST)/runshell"
 	
 	install -d "$(LINUXSTANDALONE_DEST)/bin"
-	cp dist/build/git-annex/git-annex "$(LINUXSTANDALONE_DEST)/bin/"
+	cp git-annex "$(LINUXSTANDALONE_DEST)/bin/"
 	strip "$(LINUXSTANDALONE_DEST)/bin/git-annex"
 	ln -sf git-annex "$(LINUXSTANDALONE_DEST)/bin/git-annex-shell"
 	zcat standalone/licences.gz > $(LINUXSTANDALONE_DEST)/LICENSE
@@ -138,6 +147,8 @@ linuxstandalone-nobuild: Build/Standalone Build/LinuxMkLibs
 	install -d "$(LINUXSTANDALONE_DEST)/git-core"
 	(cd "$(shell git --exec-path)" && tar c .) | (cd "$(LINUXSTANDALONE_DEST)"/git-core && tar x)
 	install -d "$(LINUXSTANDALONE_DEST)/templates"
+	install -d "$(LINUXSTANDALONE_DEST)/magic"
+	cp /usr/share/file/magic.mgc "$(LINUXSTANDALONE_DEST)/magic"
 	
 	./Build/LinuxMkLibs "$(LINUXSTANDALONE_DEST)"
 	
@@ -190,6 +201,12 @@ osxapp: Build/Standalone Build/OSXMkLibs
 
 	(cd "$(shell git --exec-path)" && tar c .) | (cd "$(OSXAPP_BASE)" && tar x)
 	install -d "$(OSXAPP_BASE)/templates"
+	install -d "$(OSXAPP_BASE)/magic"
+	if [ -e "$(OSX_MAGIC_FILE)" ]; then \
+		cp "$(OSX_MAGIC_FILE)" "$(OSXAPP_BASE)/magic/magic.mgc"; \
+	else \
+		echo "** OSX_MAGIC_FILE not set; not including it" >&2; \
+	fi
 
 	# OSX looks in man dir nearby the bin
 	$(MAKE) install-mans DESTDIR="$(OSXAPP_BASE)/.." SHAREDIR="" PREFIX=""
@@ -206,9 +223,9 @@ ANDROID_FLAGS?=
 # Uses https://github.com/neurocyte/ghc-android
 android: Build/EvilSplicer
 	echo "Running native build, to get TH splices.."
-	if [ ! -e dist/setup/setup ]; then $(CABAL) configure -O0 $(ANDROID_FLAGS) -fAndroidSplice;  fi
+	if [ ! -e dist/setup/setup ]; then $(BUILDER) configure -O0 $(ANDROID_FLAGS) -fAndroidSplice;  fi
 	mkdir -p tmp
-	if ! $(CABAL) build --ghc-options=-ddump-splices 2> tmp/dump-splices; then tail tmp/dump-splices >&2; exit 1; fi
+	if ! $(BUILDER) build --ghc-options=-ddump-splices 2> tmp/dump-splices; then tail tmp/dump-splices >&2; exit 1; fi
 	echo "Setting up Android build tree.."
 	./Build/EvilSplicer tmp/splices tmp/dump-splices standalone/no-th/evilsplicer-headers.hs
 	rsync -az --exclude tmp --exclude dist . tmp/androidtree
@@ -242,16 +259,19 @@ androidapp:
 	$(MAKE) android
 	$(MAKE) -C standalone/android
 
-# We bypass cabal, and only run the main ghc --make command for a
-# fast development built.
-fast: dist/caballog
-	@$$(grep 'ghc --make' dist/caballog | head -n 1 | sed -e 's/-package-id [^ ]*//g' -e 's/-hide-all-packages//') -O0 -j -dynamic
+# Bypass cabal, and only run the main ghc --make command for a
+# faster development build.
+fast: dist/cabalbuild
+	@sh dist/cabalbuild
 	@ln -sf dist/build/git-annex/git-annex git-annex
 	@$(MAKE) tags >/dev/null 2>&1 &
 
+dist/cabalbuild: dist/caballog
+	grep 'ghc --make' dist/caballog | tail -n 1 > dist/cabalbuild
+	
 dist/caballog: git-annex.cabal
-	$(CABAL) configure -f"-Production" -O0 --enable-executable-dynamic
-	$(CABAL) build -v2 | tee $@
+	$(BUILDER) configure -f"-Production" -O0 --enable-executable-dynamic
+	$(BUILDER) build -v2 --ghc-options="-O0 -j" | tee dist/caballog
 
 # Hardcoded command line to make hdevtools start up and work.
 # You will need some memory. It's worth it.
@@ -264,7 +284,7 @@ hdevtools:
 distributionupdate:
 	git pull
 	cabal configure
-	ghc -Wall --make Build/DistributionUpdate -XPackageImports -optP-include -optPdist/build/autogen/cabal_macros.h
+	ghc -Wall -fno-warn-tabs --make Build/DistributionUpdate -XPackageImports -optP-include -optPdist/build/autogen/cabal_macros.h
 	./Build/DistributionUpdate
 
 .PHONY: git-annex git-union-merge tags

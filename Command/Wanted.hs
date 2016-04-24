@@ -7,9 +7,8 @@
 
 module Command.Wanted where
 
-import Common.Annex
-import qualified Annex
 import Command
+import qualified Annex
 import qualified Remote
 import Logs.PreferredContent
 import Types.Messages
@@ -51,7 +50,7 @@ performGet getter a = do
 	liftIO $ putStrLn $ fromMaybe "" $ M.lookup a m
 	next $ return True
 
-performSet :: Ord a => (a -> PreferredContentExpression -> Annex ()) -> String -> a -> CommandPerform
+performSet :: (a -> PreferredContentExpression -> Annex ()) -> String -> a -> CommandPerform
 performSet setter expr a = case checkPreferredContentExpression expr of
 	Just e -> error $ "Parse error: " ++ e
 	Nothing -> do

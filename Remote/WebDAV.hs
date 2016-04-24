@@ -19,7 +19,7 @@ import Network.HTTP.Types
 import System.IO.Error
 import Control.Monad.Catch
 
-import Common.Annex
+import Annex.Common
 import Types.Remote
 import qualified Git
 import Config
@@ -191,7 +191,7 @@ testDav url (Just (u, p)) = do
 		makeParentDirs
 		void $ mkColRecursive tmpDir
 		inLocation (tmpLocation "git-annex-test") $ do
-			putContentM (Nothing, L.empty)
+			putContentM (Nothing, L8.fromString "test")
 			delContentM
   where
 	test a = liftIO $
@@ -260,7 +260,10 @@ existsDAV :: DavLocation -> DAVT IO (Either String Bool)
 existsDAV l = inLocation l check `catchNonAsync` (\e -> return (Left $ show e))
   where
 	check = do
-		setDepth Nothing
+		-- Some DAV services only support depth of 1, and
+		-- more depth is certainly not needed to check if a
+		-- location exists.
+		setDepth (Just Depth1)
 		catchJust
 			(matchStatusCodeException (== notFound404))
 			(getPropsM >> ispresent True)
@@ -336,7 +339,7 @@ storeLegacyChunked chunksize k dav b =
 	finalizer tmp' dest' = goDAV dav $ 
 		finalizeStore (baseURL dav) tmp' (fromJust $ locationParent dest')
 
-	tmp = keyTmpLocation k
+	tmp = addTrailingPathSeparator $ keyTmpLocation k
 	dest = keyLocation k
 
 retrieveLegacyChunked :: DavHandle -> Retriever

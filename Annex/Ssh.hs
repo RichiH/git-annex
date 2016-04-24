@@ -24,7 +24,7 @@ import qualified Data.Map as M
 import Data.Hash.MD5
 import System.Exit
 
-import Common.Annex
+import Annex.Common
 import Annex.LockFile
 import qualified Build.SysConfig as SysConfig
 import qualified Annex
@@ -34,7 +34,7 @@ import Config
 import Annex.Path
 import Utility.Env
 import Types.CleanupActions
-import Annex.Index (addGitEnv)
+import Git.Env
 #ifndef mingw32_HOST_OS
 import Annex.Perms
 import Annex.LockPool

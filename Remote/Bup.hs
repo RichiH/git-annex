@@ -11,10 +11,9 @@ import qualified Data.Map as M
 import qualified Data.ByteString.Lazy as L
 import Data.ByteString.Lazy.UTF8 (fromString)
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import Types.Remote
-import Types.Key
 import Types.Creds
 import qualified Git
 import qualified Git.Command
@@ -133,10 +132,10 @@ store r buprepo = byteStorer $ \k b p -> do
 	let params = bupSplitParams r buprepo k []
 	showOutput -- make way for bup output
 	let cmd = proc "bup" (toCommand params)
-	runner <- ifM commandProgressDisabled
-		( return feedWithQuietOutput
-		, return (withHandle StdinHandle)
-		)
+	quiet <- commandProgressDisabled
+	let runner = if quiet
+			then feedWithQuietOutput
+			else withHandle StdinHandle
 	liftIO $ runner createProcessSuccess cmd $ \h -> do
 		meteredWrite p h b
 		return True

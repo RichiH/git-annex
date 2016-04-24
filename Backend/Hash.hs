@@ -12,10 +12,9 @@ module Backend.Hash (
 	testKeyBackend,
 ) where
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import Types.Backend
-import Types.Key
 import Types.KeySource
 import Utility.Hash
 import Utility.ExternalSHA
@@ -171,7 +170,10 @@ hashFile hash file filesize = go hash
 	go (SHA3Hash hashsize) = use (sha3Hasher hashsize)
 	go (SkeinHash hashsize) = use (skeinHasher hashsize)
 	
-	use hasher = liftIO $ hasher <$> L.readFile file
+	use hasher = liftIO $ do
+		h <- hasher <$> L.readFile file
+		-- Force full evaluation so file is read and closed.
+		return (length h `seq` h)
 	
 	usehasher hashsize = case shaHasher hashsize filesize of
 		Left sha -> use sha

@@ -11,7 +11,7 @@
 module Remote.WebDAV.DavLocation where
 
 import Types
-import Locations
+import Annex.Locations
 import Utility.Url (URLString)
 
 import System.FilePath.Posix -- for manipulating url paths
@@ -44,7 +44,7 @@ keyLocation k = keyDir k ++ keyFile k
 
 {- Where we store temporary data for a key as it's being uploaded. -}
 keyTmpLocation :: Key -> DavLocation
-keyTmpLocation = addTrailingPathSeparator . tmpLocation . keyFile
+keyTmpLocation = tmpLocation . keyFile
 
 tmpLocation :: FilePath -> DavLocation
 tmpLocation f = tmpDir </> f

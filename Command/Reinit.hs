@@ -7,11 +7,9 @@
 
 module Command.Reinit where
 
-import Common.Annex
 import Command
 import Annex.Init
 import Annex.UUID
-import Types.UUID
 import qualified Remote
 import qualified Annex.SpecialRemote
 	
@@ -38,6 +36,6 @@ perform s = do
 		then return $ toUUID s
 		else Remote.nameToUUID s
 	storeUUID u
-	initialize'
+	initialize' Nothing
 	Annex.SpecialRemote.autoEnable
 	next $ return True

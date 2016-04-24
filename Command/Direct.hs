@@ -7,13 +7,13 @@
 
 module Command.Direct where
 
-import Common.Annex
 import Command
 import qualified Git
 import qualified Git.LsFiles
 import qualified Git.Branch
 import Config
 import Annex.Direct
+import Annex.Version
 
 cmd :: Command
 cmd = notBareRepo $ noDaemonRunning $
@@ -24,7 +24,10 @@ seek :: CmdParams -> CommandSeek
 seek = withNothing start
 
 start :: CommandStart
-start = ifM isDirect ( stop , next perform )
+start = ifM versionSupportsDirectMode
+	( ifM isDirect ( stop , next perform )
+	, error "Direct mode is not suppported by this repository version. Use git-annex unlock instead."
+	)
 
 perform :: CommandPerform
 perform = do

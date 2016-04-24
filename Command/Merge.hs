@@ -7,11 +7,9 @@
 
 module Command.Merge where
 
-import Common.Annex
 import Command
 import qualified Annex.Branch
-import qualified Git.Branch
-import Command.Sync (prepMerge, mergeLocal)
+import Command.Sync (prepMerge, mergeLocal, getCurrBranch)
 
 cmd :: Command
 cmd = command "merge" SectionMaintenance
@@ -35,4 +33,4 @@ mergeBranch = do
 mergeSynced :: CommandStart
 mergeSynced = do
 	prepMerge
-	mergeLocal =<< inRepo Git.Branch.current
+	mergeLocal =<< join getCurrBranch

@@ -1,32 +1,26 @@
 flags:
   git-annex:
     concurrentoutput: true
-    tahoe: true
-    tdfa: true
-    inotify: true
-    feed: true
-    database: true
-    webapp-secure: true
     production: true
-    ekg: false
     assistant: true
     pairing: true
     cryptonite: true
-    xmpp: false
     network-uri: true
     s3: true
-    dbus: false
     testsuite: true
     webdav: true
     torrentparser: true
+    webapp: true
+    magicmime: false
+    dbus: false
+    xmpp: false
     android: false
     androidsplice: false
-    quvi: true
-    dns: true
-    desktopnotify: true
-    webapp: true
+    ekg: false
 packages:
 - '.'
+resolver: lts-5.5
 extra-deps:
-- Win32-extras-0.2.0.1
-resolver: lts-3.7
+- mountpoints-1.0.1
+- disk-free-space-0.1.0.1
+- process-1.3.0.0

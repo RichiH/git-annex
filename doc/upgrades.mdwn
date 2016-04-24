@@ -43,6 +43,41 @@ conflicts first before upgrading git-annex.
 
 The upgrade events, so far:
 
+## v5 -> v6 (git-annex version 6.x)
+
+The upgrade from v5 to v6 is handled manually for now.
+Run `git-annex upgrade` to perform the upgrade.
+
+A v6 git-annex repository can have some files locked while other files are
+unlocked, and all git and git-annex commands can be used on both locked and
+unlocked files. (Although for locked files to be accessible, the filesystem
+must support symbolic links..
+
+Direct mode repositories are upgraded to instead use the new 
+[[adjusted branches feature|git-annex-adjust]], which transparently unlocks
+all locked files in the local repository.
+
+The behavior of some commands changes in an upgraded repository:
+
+* `git add` will add files to the annex, rather than adding them directly
+   to the git repository. To cause some files to be added directly
+   to git, you can configure `annex.largefiles`. For example:
+
+   	git config annex.largefiles "largerthan=100kb and not (include=*.c or include=*.h)"
+
+* `git annex unlock` and `git annex lock` change how the pointer to 
+  the annexed content is stored in git.
+
+There is also a new `annex.thin` setting, which makes unlocked files in v6
+repositories be hard linked to their content, instead of a copy. This saves
+disk space but means any modification of an unlocked file will lose the
+local (and possibly only) copy of the old version. This is automatically
+enabled when upgrading a direct mode repository, since direct mode made the
+same tradeoff.
+
+See [[tips/unlocked_files/]] for more details about locked files and thin
+mode.
+
 ## v4 -> v5 (git-annex version 5.x)
 
 The upgrade from v4 to v5 is handled

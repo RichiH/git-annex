@@ -1,6 +1,9 @@
 #!/usr/bin/make -f
 
-export CABAL=debian/cabal-wrapper
+export BUILDER=debian/cabal-wrapper
+
+# -j1 is used for reproducible build
+export BUILDEROPTIONS=-j1
 
 STANDALONE_BUILD=$(shell grep -qe '^Package: git-annex-standalone' debian/control \
                          && echo 1 || echo 0)
@@ -24,6 +27,10 @@ override_dh_auto_install:
 
 override_dh_fixperms:
 	dh_fixperms -Xld-linux
+
+# gdb can't do much with a haskell program, so avoid the debug package
+override_dh_strip:
+	dh_strip --no-ddebs
 
 # Do not add "ldconfig" trigger since all libraries in the standalone build
 # are private copies and the trigger activate-noawait trigger may not work

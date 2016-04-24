@@ -9,11 +9,10 @@
 
 module CmdLine.Action where
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import Annex.Concurrent
 import Types.Command
-import qualified Annex.Queue
 import Messages.Concurrent
 import Messages.Internal
 import Types.Messages
@@ -54,7 +53,7 @@ performCommandAction Command { cmdcheck = c, cmdname = name } seek cont = do
 commandAction :: CommandStart -> Annex ()
 commandAction a = withOutputType go 
   where
-	go (ConcurrentOutput n) = do
+	go o@(ConcurrentOutput n _) = do
 		ws <- Annex.getState Annex.workers
 		(st, ws') <- if null ws
 			then do
@@ -64,7 +63,7 @@ commandAction a = withOutputType go
 				l <- liftIO $ drainTo (n-1) ws
 				findFreeSlot l
 		w <- liftIO $ async
-			$ snd <$> Annex.run st (inOwnConsoleRegion run)
+			$ snd <$> Annex.run st (inOwnConsoleRegion o run)
 		Annex.changeState $ \s -> s { Annex.workers = Right w:ws' }
 	go _  =	run
 	run = void $ includeCommandAction a
@@ -119,16 +118,13 @@ findFreeSlot = go []
 
 {- Like commandAction, but without the concurrency. -}
 includeCommandAction :: CommandStart -> CommandCleanup
-includeCommandAction a = account =<< tryIO go
+includeCommandAction a = account =<< tryIO (callCommandAction a)
   where
-	go = do
-		Annex.Queue.flushWhenFull
-		callCommandAction a
 	account (Right True) = return True
 	account (Right False) = incerr
 	account (Left err) = do
 		toplevelWarning True (show err)
-		showEndFail
+		implicitMessage showEndFail
 		incerr
 	incerr = do
 		Annex.incError
@@ -138,15 +134,20 @@ includeCommandAction a = account =<< tryIO go
  - stages, without catching errors. Useful if one command wants to run
  - part of another command. -}
 callCommandAction :: CommandStart -> CommandCleanup
-callCommandAction = start
+callCommandAction = fromMaybe True <$$> callCommandAction' 
+
+{- Like callCommandAction, but returns Nothing when the command did not
+ - perform any action. -}
+callCommandAction' :: CommandStart -> Annex (Maybe Bool)
+callCommandAction' = start
   where
 	start   = stage $ maybe skip perform
 	perform = stage $ maybe failure cleanup
 	cleanup = stage $ status
 	stage = (=<<)
-	skip = return True
-	failure = showEndFail >> return False
-	status r = showEndResult r >> return r
+	skip = return Nothing
+	failure = implicitMessage showEndFail >> return (Just False)
+	status r = implicitMessage (showEndResult r) >> return (Just r)
 
 {- Do concurrent output when that has been requested. -}
 allowConcurrentOutput :: Annex a -> Annex a
@@ -154,9 +155,13 @@ allowConcurrentOutput :: Annex a -> Annex a
 allowConcurrentOutput a = go =<< Annex.getState Annex.concurrentjobs
   where
 	go Nothing = a
-	go (Just n) = Regions.displayConsoleRegions $
-		bracket_ (setup n) cleanup a
-	setup = Annex.setOutput . ConcurrentOutput
+	go (Just n) = ifM (liftIO concurrentOutputSupported)
+		( Regions.displayConsoleRegions $
+			goconcurrent (ConcurrentOutput n True)
+		, goconcurrent (ConcurrentOutput n False)
+		)
+	goconcurrent o = bracket_ (setup o) cleanup a
+	setup = Annex.setOutput
 	cleanup = do
 		finishCommandActions
 		Annex.setOutput NormalOutput

@@ -11,7 +11,7 @@ module Annex.CheckAttr (
 	checkAttrStop,
 ) where
 
-import Common.Annex
+import Annex.Common
 import qualified Git.CheckAttr as Git
 import qualified Annex
 
@@ -20,6 +20,7 @@ annexAttrs :: [Git.Attr]
 annexAttrs =
 	[ "annex.backend"
 	, "annex.numcopies"
+	, "annex.largefiles"
 	]
 
 checkAttr :: Git.Attr -> FilePath -> Annex String

@@ -7,7 +7,6 @@
 
 module Command.ConfigList where
 
-import Common.Annex
 import Command
 import Annex.UUID
 import Annex.Init
@@ -46,7 +45,7 @@ findOrGenUUID = do
 		else ifM (Annex.Branch.hasSibling <||> (isJust <$> Fields.getField Fields.autoInit))
 			( do
 				liftIO checkNotReadOnly
-				initialize Nothing
+				initialize Nothing Nothing
 				getUUID
 			, return NoUUID
 			)

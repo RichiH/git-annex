@@ -7,7 +7,6 @@
 
 module Command.Version where
 
-import Common.Annex
 import Command
 import qualified Build.SysConfig as SysConfig
 import Annex.Version
@@ -50,7 +49,8 @@ showVersion = do
 	liftIO $ do
 		showPackageVersion
 		vinfo "local repository version" $ fromMaybe "unknown" v
-		vinfo "supported repository version" supportedVersion
+		vinfo "supported repository versions" $
+			unwords supportedVersions
 		vinfo "upgrade supported from repository versions" $
 			unwords upgradableVersions
 

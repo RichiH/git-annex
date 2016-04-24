@@ -5,41 +5,33 @@
  - Licensed under the GNU GPL version 3 or higher.
  -}
 
-{-# LANGUAGE CPP #-}
-
 module Command.AddUrl where
 
 import Network.URI
 
-import Common.Annex
 import Command
 import Backend
-import qualified Command.Add
 import qualified Annex
-import qualified Annex.Queue
 import qualified Annex.Url as Url
 import qualified Backend.URL
 import qualified Remote
 import qualified Types.Remote as Remote
+import qualified Command.Add
 import Annex.Content
+import Annex.Ingest
 import Annex.UUID
 import Logs.Web
-import Types.Key
 import Types.KeySource
 import Types.UrlContents
-import Config
-import Annex.Content.Direct
 import Annex.FileMatcher
 import Logs.Location
 import Utility.Metered
 import qualified Annex.Transfer as Transfer
-#ifdef WITH_QUVI
 import Annex.Quvi
 import qualified Utility.Quvi as Quvi
-#endif
 
 cmd :: Command
-cmd = notBareRepo $ withGlobalOptions [jobsOption] $
+cmd = notBareRepo $ withGlobalOptions [jobsOption, jsonOption] $
 	command "addurl" SectionCommon "add urls to annex"
 		(paramRepeating paramUrl) (seek <$$> optParser)
 
@@ -51,6 +43,8 @@ data AddUrlOptions = AddUrlOptions
 	, suffixOption :: Maybe String
 	, relaxedOption :: Bool
 	, rawOption :: Bool
+	, batchOption :: BatchMode
+	, batchFilesOption :: Bool
 	}
 
 optParser :: CmdParamsDesc -> Parser AddUrlOptions
@@ -74,6 +68,11 @@ optParser desc = AddUrlOptions
 		))
 	<*> parseRelaxedOption
 	<*> parseRawOption
+	<*> parseBatchOption
+	<*> switch
+		( long "with-files"
+		<> help "parse batch mode lines of the form \"$url $file\""
+		)
 
 parseRelaxedOption :: Parser Bool
 parseRelaxedOption = switch
@@ -88,12 +87,26 @@ parseRawOption = switch
 	)
 
 seek :: AddUrlOptions -> CommandSeek
-seek o = allowConcurrentOutput $
-	forM_ (addUrls o) $ \u -> do
+seek o = allowConcurrentOutput $ do
+	forM_ (addUrls o) (\u -> go (o, u))
+	case batchOption o of
+		Batch -> batchInput (parseBatchInput o) go
+		NoBatch -> noop
+  where
+	go (o', u) = do
 		r <- Remote.claimingUrl u
-		if Remote.uuid r == webUUID || rawOption o
-			then void $ commandAction $ startWeb o u
-			else checkUrl r o u
+		if Remote.uuid r == webUUID || rawOption o'
+			then void $ commandAction $ startWeb o' u
+			else checkUrl r o' u
+
+parseBatchInput :: AddUrlOptions -> String -> Either String (AddUrlOptions, URLString)
+parseBatchInput o s
+	| batchFilesOption o =
+		let (u, f) = separate (== ' ') s
+		in if null u || null f
+			then Left ("parsed empty url or filename in input: " ++ s)
+			else Right (o { fileOption = Just f }, u)
+	| otherwise = Right (o, s)
 
 checkUrl :: Remote -> AddUrlOptions -> URLString -> Annex ()
 checkUrl r o u = do
@@ -172,15 +185,10 @@ startWeb o s = go $ fromMaybe bad $ parseURI urlstring
 		Url.parseURIRelaxed $ urlstring
 	go url = case downloader of
 		QuviDownloader -> usequvi
-		_ -> 
-#ifdef WITH_QUVI
-			ifM (quviSupported urlstring)
-				( usequvi
-				, regulardownload url
-				)
-#else
-			regulardownload url
-#endif
+		_ -> ifM (quviSupported urlstring)
+			( usequvi
+			, regulardownload url
+			)
 	regulardownload url = do
 		pathmax <- liftIO $ fileNameLengthLimit "."
 		urlinfo <- if relaxedOption o
@@ -199,7 +207,6 @@ startWeb o s = go $ fromMaybe bad $ parseURI urlstring
 						)
 		showStart "addurl" file
 		next $ performWeb (relaxedOption o) urlstring file urlinfo
-#ifdef WITH_QUVI
 	badquvi = error $ "quvi does not know how to download url " ++ urlstring
 	usequvi = do
 		page <- fromMaybe badquvi
@@ -211,9 +218,6 @@ startWeb o s = go $ fromMaybe bad $ parseURI urlstring
 				Quvi.pageTitle page ++ "." ++ fromMaybe "m" (Quvi.linkSuffix link)
 		showStart "addurl" file
 		next $ performQuvi (relaxedOption o) urlstring (Quvi.linkUrl link) file
-#else
-	usequvi = error "not built with quvi support"
-#endif
 
 performWeb :: Bool -> URLString -> FilePath -> Url.UrlInfo -> CommandPerform
 performWeb relaxed url file urlinfo = ifAnnexed file addurl geturl
@@ -222,7 +226,6 @@ performWeb relaxed url file urlinfo = ifAnnexed file addurl geturl
 	addurl = addUrlChecked relaxed url webUUID $ \k -> return $
 		(Url.urlExists urlinfo, Url.urlSize urlinfo == keySize k)
 
-#ifdef WITH_QUVI
 performQuvi :: Bool -> URLString -> URLString -> FilePath -> CommandPerform
 performQuvi relaxed pageurl videourl file = ifAnnexed file addurl geturl
   where
@@ -231,11 +234,9 @@ performQuvi relaxed pageurl videourl file = ifAnnexed file addurl geturl
 		cleanup webUUID quviurl file key Nothing
 		return True
 	geturl = next $ isJust <$> addUrlFileQuvi relaxed quviurl videourl file
-#endif
 
-#ifdef WITH_QUVI
 addUrlFileQuvi :: Bool -> URLString -> URLString -> FilePath -> Annex (Maybe Key)
-addUrlFileQuvi relaxed quviurl videourl file = do
+addUrlFileQuvi relaxed quviurl videourl file = stopUnless (doesNotExist file) $ do
 	let key = Backend.URL.fromUrl quviurl Nothing
 	ifM (pure relaxed <||> Annex.getState Annex.fast)
 		( do
@@ -262,7 +263,6 @@ addUrlFileQuvi relaxed quviurl videourl file = do
 						return (Just key)
 					else return Nothing
 		)
-#endif
 
 addUrlChecked :: Bool -> URLString -> UUID -> (Key -> Annex (Bool, Bool)) -> Key -> CommandPerform
 addUrlChecked relaxed url u checkexistssize key
@@ -285,12 +285,20 @@ addUrlChecked relaxed url u checkexistssize key
 		)
 
 addUrlFile :: Bool -> URLString -> Url.UrlInfo -> FilePath -> Annex (Maybe Key)
-addUrlFile relaxed url urlinfo file = do
+addUrlFile relaxed url urlinfo file = stopUnless (doesNotExist file) $ do
 	liftIO $ createDirectoryIfMissing True (parentDir file)
 	ifM (Annex.getState Annex.fast <||> pure relaxed)
 		( nodownload url urlinfo file
 		, downloadWeb url urlinfo file
 		)
+
+doesNotExist :: FilePath -> Annex Bool
+doesNotExist file = go =<< liftIO (catchMaybeIO $ getSymbolicLinkStatus file)
+  where
+	go Nothing = return True
+	go (Just _) = do
+		warning $ file ++ " already exists and is not annexed; not overwriting"
+		return False
 
 downloadWeb :: URLString -> Url.UrlInfo -> FilePath -> Annex (Maybe Key)
 downloadWeb url urlinfo file = do
@@ -348,16 +356,11 @@ cleanup u url file key mtmp = case mtmp of
 			)
   where
 	go = do
+		maybeShowJSON [("key", key2file key)]
 		when (isJust mtmp) $
 			logStatus key InfoPresent
 		setUrlPresent u key url
-		Command.Add.addLink file key Nothing
-		whenM isDirect $ do
-			void $ addAssociatedFile key file
-			{- For moveAnnex to work in direct mode, the symlink
-			 - must already exist, so flush the queue. -}
-			Annex.Queue.flush
-		maybe noop (moveAnnex key) mtmp
+		addAnnexedFile file key mtmp
 
 nodownload :: URLString -> Url.UrlInfo -> FilePath -> Annex (Maybe Key)
 nodownload url urlinfo file

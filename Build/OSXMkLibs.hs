@@ -7,14 +7,16 @@
 
 module Main where
 
-import Control.Applicative
 import System.Environment (getArgs)
 import Data.Maybe
 import System.FilePath
 import System.Directory
 import Control.Monad
+import Control.Monad.IfElse
 import Data.List
 import Data.String.Utils
+import Control.Applicative
+import Prelude
 
 import Utility.PartialPrelude
 import Utility.Directory
@@ -47,14 +49,20 @@ installLibs appbase replacement_libs libmap = do
 		let fulllib = dropWhile (== '/') lib
 		let dest = appbase </> fulllib
 		let symdest = appbase </> shortlib
+		-- This is a hack; libraries need to be in the same
+		-- directory as the program, so also link them into the
+		-- extra directory.
+		let symdestextra = appbase </> "extra" </> shortlib
 		ifM (doesFileExist dest)
 			( return Nothing
 			, do
 				createDirectoryIfMissing True (parentDir dest)
 				putStrLn $ "installing " ++ pathlib ++ " as " ++ shortlib
-				_ <- boolSystem "cp" [File pathlib, File dest]
-				_ <- boolSystem "chmod" [Param "644", File dest]
-				_ <- boolSystem "ln" [Param "-s", File fulllib, File symdest]
+				unlessM (boolSystem "cp" [File pathlib, File dest]
+					<&&> boolSystem "chmod" [Param "644", File dest]
+					<&&> boolSystem "ln" [Param "-s", File fulllib, File symdest]
+					<&&> boolSystem "ln" [Param "-s", File (".." </> fulllib), File symdestextra]) $
+					error "library install failed"
 				return $ Just appbase
 			)
 	return (catMaybes libs, replacement_libs', libmap')

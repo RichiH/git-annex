@@ -1,6 +1,6 @@
 {- git-annex repository initialization
  -
- - Copyright 2011 Joey Hess <id@joeyh.name>
+ - Copyright 2011-2016 Joey Hess <id@joeyh.name>
  -
  - Licensed under the GNU GPL version 3 or higher.
  -}
@@ -14,9 +14,10 @@ module Annex.Init (
 	initialize',
 	uninitialize,
 	probeCrippledFileSystem,
+	probeCrippledFileSystem',
 ) where
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import qualified Git
 import qualified Git.LsFiles
@@ -29,17 +30,19 @@ import Types.TrustLevel
 import Annex.Version
 import Annex.Difference
 import Annex.UUID
+import Annex.Link
 import Config
 import Annex.Direct
-import Annex.Content.Direct
+import Annex.AdjustedBranch
 import Annex.Environment
-import Backend
 import Annex.Hook
+import Annex.InodeSentinal
 import Upgrade
+import Annex.Perms
+import qualified Database.Keys
 #ifndef mingw32_HOST_OS
 import Utility.UserInfo
 import Utility.FileMode
-import Annex.Perms
 import System.Posix.User
 import qualified Utility.LockFile.Posix as Posix
 #endif
@@ -57,8 +60,8 @@ genDescription Nothing = do
 	return $ concat [hostname, ":", reldir]
 #endif
 
-initialize :: Maybe String -> Annex ()
-initialize mdescription = do
+initialize :: Maybe String -> Maybe Version -> Annex ()
+initialize mdescription mversion = do
 	{- Has to come before any commits are made as the shared
 	 - clone heuristic expects no local objects. -}
 	sharedclone <- checkSharedClone
@@ -68,7 +71,7 @@ initialize mdescription = do
 	ensureCommit $ Annex.Branch.create
 
 	prepUUID
-	initialize'
+	initialize' mversion
 	
 	initSharedClone sharedclone
 
@@ -77,25 +80,33 @@ initialize mdescription = do
 
 -- Everything except for uuid setup, shared clone setup, and initial
 -- description.
-initialize' :: Annex ()
-initialize' = do
+initialize' :: Maybe Version -> Annex ()
+initialize' mversion = do
 	checkLockSupport
 	checkFifoSupport
 	checkCrippledFileSystem
 	unlessM isBare $
 		hookWrite preCommitHook
 	setDifferences
-	setVersion supportedVersion
-	ifM (crippledFileSystem <&&> not <$> isBare)
-		( do
-			enableDirectMode
-			setDirect True
+	unlessM (isJust <$> getVersion) $
+		setVersion (fromMaybe defaultVersion mversion)
+	whenM versionSupportsUnlockedPointers $ do
+		configureSmudgeFilter
+		Database.Keys.scanAssociatedFiles
+	ifM (crippledFileSystem <&&> (not <$> isBare))
+		( ifM versionSupportsUnlockedPointers
+			( adjustToCrippledFileSystem
+			, do
+				enableDirectMode
+				setDirect True
+			)
 		-- Handle case where this repo was cloned from a
 		-- direct mode repo
 		, unlessM isBare
 			switchHEADBack
 		)
-	createInodeSentinalFile
+	checkAdjustedClone
+	createInodeSentinalFile False
 
 uninitialize :: Annex ()
 uninitialize = do
@@ -114,7 +125,7 @@ ensureInitialized :: Annex ()
 ensureInitialized = getVersion >>= maybe needsinit checkUpgrade
   where
 	needsinit = ifM Annex.Branch.hasSibling
-			( initialize Nothing
+			( initialize Nothing Nothing
 			, error "First run: git-annex init"
 			)
 
@@ -129,16 +140,20 @@ isBare = fromRepo Git.repoIsLocalBare
  - or removing write access from files. -}
 probeCrippledFileSystem :: Annex Bool
 probeCrippledFileSystem = do
+	tmp <- fromRepo gitAnnexTmpMiscDir
+	createAnnexDirectory tmp
+	liftIO $ probeCrippledFileSystem' tmp
+
+probeCrippledFileSystem' :: FilePath -> IO Bool
+probeCrippledFileSystem' tmp = do
 #ifdef mingw32_HOST_OS
 	return True
 #else
-	tmp <- fromRepo gitAnnexTmpMiscDir
 	let f = tmp </> "gaprobe"
-	createAnnexDirectory tmp
-	liftIO $ writeFile f ""
-	uncrippled <- liftIO $ probe f
-	void $ liftIO $ tryIO $ allowWrite f
-	liftIO $ removeFile f
+	writeFile f ""
+	uncrippled <- probe f
+	void $ tryIO $ allowWrite f
+	removeFile f
 	return $ not uncrippled
   where
 	probe f = catchBoolIO $ do

@@ -5,7 +5,7 @@
  - Licensed under the GNU GPL version 3 or higher.
  -}
 
-{-# LANGUAGE CPP, GeneralizedNewtypeDeriving, PackageImports, BangPatterns #-}
+{-# LANGUAGE GeneralizedNewtypeDeriving, PackageImports, BangPatterns #-}
 
 module Annex (
 	Annex,
@@ -30,6 +30,7 @@ module Annex (
 	getGitConfig,
 	changeGitConfig,
 	changeGitRepo,
+	adjustGitRepo,
 	getRemoteGitConfig,
 	withCurrentState,
 	changeDirectory,
@@ -41,6 +42,7 @@ import qualified Git
 import qualified Git.Config
 import Annex.Fixup
 import Git.CatFile
+import Git.HashObject
 import Git.CheckAttr
 import Git.CheckIgnore
 import qualified Git.Hook
@@ -60,9 +62,8 @@ import Types.NumCopies
 import Types.LockCache
 import Types.DesktopNotify
 import Types.CleanupActions
-#ifdef WITH_QUVI
+import qualified Database.Keys.Handle as Keys
 import Utility.Quvi (QuviVersion)
-#endif
 import Utility.InodeCache
 import Utility.Url
 
@@ -94,6 +95,7 @@ newtype Annex a = Annex { runAnnex :: ReaderT (MVar AnnexState) IO a }
 -- internal state storage
 data AnnexState = AnnexState
 	{ repo :: Git.Repo
+	, repoadjustment :: (Git.Repo -> IO Git.Repo)
 	, gitconfig :: GitConfig
 	, backends :: [BackendA Annex]
 	, remotes :: [Types.Remote.RemoteA Annex]
@@ -105,6 +107,7 @@ data AnnexState = AnnexState
 	, branchstate :: BranchState
 	, repoqueue :: Maybe Git.Queue.Queue
 	, catfilehandles :: M.Map FilePath CatFileHandle
+	, hashobjecthandle :: Maybe HashObjectHandle
 	, checkattrhandle :: Maybe CheckAttrHandle
 	, checkignorehandle :: Maybe (Maybe CheckIgnoreHandle)
 	, forcebackend :: Maybe String
@@ -127,18 +130,19 @@ data AnnexState = AnnexState
 	, errcounter :: Integer
 	, unusedkeys :: Maybe (S.Set Key)
 	, tempurls :: M.Map Key URLString
-#ifdef WITH_QUVI
 	, quviversion :: Maybe QuviVersion
-#endif
 	, existinghooks :: M.Map Git.Hook.Hook Bool
 	, desktopnotify :: DesktopNotify
 	, workers :: [Either AnnexState (Async AnnexState)]
 	, concurrentjobs :: Maybe Int
+	, keysdbhandle :: Maybe Keys.DbHandle
+	, cachedcurrentbranch :: Maybe Git.Branch
 	}
 
 newState :: GitConfig -> Git.Repo -> AnnexState
 newState c r = AnnexState
 	{ repo = r
+	, repoadjustment = return
 	, gitconfig = c
 	, backends = []
 	, remotes = []
@@ -150,6 +154,7 @@ newState c r = AnnexState
 	, branchstate = startBranchState
 	, repoqueue = Nothing
 	, catfilehandles = M.empty
+	, hashobjecthandle = Nothing
 	, checkattrhandle = Nothing
 	, checkignorehandle = Nothing
 	, forcebackend = Nothing
@@ -172,13 +177,13 @@ newState c r = AnnexState
 	, errcounter = 0
 	, unusedkeys = Nothing
 	, tempurls = M.empty
-#ifdef WITH_QUVI
 	, quviversion = Nothing
-#endif
 	, existinghooks = M.empty
 	, desktopnotify = mempty
 	, workers = []
 	, concurrentjobs = Nothing
+	, keysdbhandle = Nothing
+	, cachedcurrentbranch = Nothing
 	}
 
 {- Makes an Annex state object for the specified git repo.
@@ -193,25 +198,32 @@ new r = do
 {- Performs an action in the Annex monad from a starting state,
  - returning a new state. -}
 run :: AnnexState -> Annex a -> IO (a, AnnexState)
-run s a = do
-	mvar <- newMVar s
+run s a = flip run' a =<< newMVar s
+
+run' :: MVar AnnexState -> Annex a -> IO (a, AnnexState)
+run' mvar a = do
 	r <- runReaderT (runAnnex a) mvar
+		`onException` (flush =<< readMVar mvar)
 	s' <- takeMVar mvar
+	flush s'
 	return (r, s')
+  where
+	flush = maybe noop Keys.flushDbQueue . keysdbhandle
 
 {- Performs an action in the Annex monad from a starting state, 
  - and throws away the new state. -}
 eval :: AnnexState -> Annex a -> IO a
-eval s a = do
-	mvar <- newMVar s
-	runReaderT (runAnnex a) mvar
+eval s a = fst <$> run s a
 
 {- Makes a runner action, that allows diving into IO and from inside
  - the IO action, running an Annex action. -}
 makeRunner :: Annex (Annex a -> IO a)
 makeRunner = do
 	mvar <- ask
-	return $ \a -> runReaderT (runAnnex a) mvar
+	return $ \a -> do
+		(r, s) <- run' mvar a
+		putMVar mvar s
+		return r
 
 getState :: (AnnexState -> v) -> Annex v
 getState selector = do
@@ -285,10 +297,20 @@ changeGitConfig a = changeState $ \s -> s { gitconfig = a (gitconfig s) }
 
 {- Changing the git Repo data also involves re-extracting its GitConfig. -}
 changeGitRepo :: Git.Repo -> Annex ()
-changeGitRepo r = changeState $ \s -> s
-	{ repo = r
-	, gitconfig = extractGitConfig r
-	}
+changeGitRepo r = do
+	adjuster <- getState repoadjustment
+	r' <- liftIO $ adjuster r
+	changeState $ \s -> s
+		{ repo = r'
+		, gitconfig = extractGitConfig r'
+		}
+
+{- Adds an adjustment to the Repo data. Adjustments persist across reloads
+ - of the repo's config. -}
+adjustGitRepo :: (Git.Repo -> IO Git.Repo) -> Annex ()
+adjustGitRepo a = do
+	changeState $ \s -> s { repoadjustment = \r -> repoadjustment s r >>= a }
+	changeGitRepo =<< gitRepo
 
 {- Gets the RemoteGitConfig from a remote, given the Git.Repo for that
  - remote. -}

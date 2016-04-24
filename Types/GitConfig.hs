@@ -19,6 +19,7 @@ import qualified Git.Construct
 import Git.SharedRepository
 import Utility.DataUnits
 import Config.Cost
+import Types.UUID
 import Types.Distribution
 import Types.Availability
 import Types.NumCopies
@@ -32,6 +33,7 @@ import Utility.ThreadScheduler (Seconds(..))
  - such as annex.foo -}
 data GitConfig = GitConfig
 	{ annexVersion :: Maybe String
+	, annexUUID :: UUID
 	, annexNumCopies :: Maybe NumCopies
 	, annexDiskReserve :: Integer
 	, annexDirect :: Bool
@@ -52,6 +54,7 @@ data GitConfig = GitConfig
 	, annexWebDownloadCommand :: Maybe String
 	, annexCrippledFileSystem :: Bool
 	, annexLargeFiles :: Maybe String
+	, annexAddSmallFiles :: Bool
 	, annexFsckNudge :: Bool
 	, annexAutoUpgrade :: AutoUpgrade
 	, annexExpireUnused :: Maybe (Maybe Duration)
@@ -60,11 +63,13 @@ data GitConfig = GitConfig
 	, annexListen :: Maybe String
 	, annexStartupScan :: Bool
 	, annexHardLink :: Bool
+	, annexThin :: Bool
 	, annexDifferences :: Differences
 	, annexUsedRefSpec :: Maybe RefSpec
 	, annexVerify :: Bool
 	, annexPidLock :: Bool
 	, annexPidLockTimeout :: Seconds
+	, annexAddUnlocked :: Bool
 	, coreSymlinks :: Bool
 	, coreSharedRepository :: SharedRepository
 	, gcryptId :: Maybe String
@@ -74,6 +79,7 @@ data GitConfig = GitConfig
 extractGitConfig :: Git.Repo -> GitConfig
 extractGitConfig r = GitConfig
 	{ annexVersion = notempty $ getmaybe (annex "version")
+	, annexUUID = maybe NoUUID toUUID $ getmaybe (annex "uuid")
 	, annexNumCopies = NumCopies <$> getmayberead (annex "numcopies")
 	, annexDiskReserve = fromMaybe onemegabyte $
 		readSize dataUnits =<< getmaybe (annex "diskreserve")
@@ -95,6 +101,7 @@ extractGitConfig r = GitConfig
 	, annexWebDownloadCommand = getmaybe (annex "web-download-command")
 	, annexCrippledFileSystem = getbool (annex "crippledfilesystem") False
 	, annexLargeFiles = getmaybe (annex "largefiles")
+	, annexAddSmallFiles = getbool (annex "addsmallfiles") True
 	, annexFsckNudge = getbool (annex "fscknudge") True
 	, annexAutoUpgrade = toAutoUpgrade $ getmaybe (annex "autoupgrade")
 	, annexExpireUnused = maybe Nothing Just . parseDuration
@@ -104,6 +111,7 @@ extractGitConfig r = GitConfig
 	, annexListen = getmaybe (annex "listen")
 	, annexStartupScan = getbool (annex "startupscan") True
 	, annexHardLink = getbool (annex "hardlink") False
+	, annexThin = getbool (annex "thin") False
 	, annexDifferences = getDifferences r
 	, annexUsedRefSpec = either (const Nothing) Just . parseRefSpec 
 		=<< getmaybe (annex "used-refspec")
@@ -111,6 +119,7 @@ extractGitConfig r = GitConfig
 	, annexPidLock = getbool (annex "pidlock") False
 	, annexPidLockTimeout = Seconds $ fromMaybe 300 $
 		getmayberead (annex "pidlocktimeout")
+	, annexAddUnlocked = getbool (annex "addunlocked") False
 	, coreSymlinks = getbool "core.symlinks" True
 	, coreSharedRepository = getSharedRepository r
 	, gcryptId = getmaybe "core.gcrypt-id"

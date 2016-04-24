@@ -1,6 +1,6 @@
 {- Standard git remotes.
  -
- - Copyright 2011-2012 Joey Hess <id@joeyh.name>
+ - Copyright 2011-2015 Joey Hess <id@joeyh.name>
  -
  - Licensed under the GNU GPL version 3 or higher.
  -}
@@ -13,7 +13,7 @@ module Remote.Git (
 	repoAvail,
 ) where
 
-import Common.Annex
+import Annex.Common
 import Annex.Ssh
 import Types.Remote
 import Types.GitConfig
@@ -35,7 +35,7 @@ import Utility.Tmp
 import Config
 import Config.Cost
 import Annex.Init
-import Types.Key
+import Annex.Version
 import Types.CleanupActions
 import qualified CmdLine.GitAnnexShell.Fields as Fields
 import Logs.Location
@@ -57,7 +57,6 @@ import Types.NumCopies
 
 import Control.Concurrent
 import Control.Concurrent.MSampleVar
-import Control.Concurrent.Async
 import qualified Data.Map as M
 import Network.URI
 
@@ -387,17 +386,14 @@ lockKey r key callback
 						, std_out = CreatePipe
 						, std_err = UseHandle nullh
 						}
-		-- Wait for either the process to exit, or for it to
-		-- indicate the content is locked.
-		v <- liftIO $ race 
-			(waitForProcess p)
-			(hGetLine hout)
-		let signaldone = void $ tryNonAsync $ liftIO $ do
-			hPutStrLn hout ""
-			hFlush hout
-			hClose hin
-			hClose hout
-			void $ waitForProcess p
+		v <- liftIO $ tryIO $ hGetLine hout
+		let signaldone = void $ tryNonAsync $ liftIO $ mapM_ tryNonAsync
+			[ hPutStrLn hout ""
+			, hFlush hout
+			, hClose hin
+			, hClose hout
+			, void $ waitForProcess p
+			]
 		let checkexited = not . isJust <$> getProcessExitCode p
 		case v of
 			Left _exited -> do
@@ -405,6 +401,7 @@ lockKey r key callback
 				liftIO $ do
 					hClose hin
 					hClose hout
+					void $ waitForProcess p
 				failedlock
 			Right l 
 				| l == Ssh.contentLockedMarker -> bracket_
@@ -442,9 +439,8 @@ copyFromRemote' r key file dest meterupdate
 						file noRetry noObserver 
 						(\p -> copier object dest (combineMeterUpdate p meterupdate) checksuccess)
 	| Git.repoIsSsh (repo r) = unVerified $ feedprogressback $ \p -> do
-		direct <- isDirect
 		Ssh.rsyncHelper (Just (combineMeterUpdate meterupdate p))
-			=<< Ssh.rsyncParamsRemote direct r Download key dest file
+			=<< Ssh.rsyncParamsRemote False r Download key dest file
 	| Git.repoIsHttp (repo r) = unVerified $
 		Annex.Content.downloadUrl key meterupdate (keyUrls r key) dest
 	| otherwise = error "copying from non-ssh, non-http remote not supported"
@@ -545,15 +541,18 @@ copyToRemote' r key file meterupdate
 			copylocal =<< Annex.Content.prepSendAnnex key
 	| Git.repoIsSsh (repo r) = commitOnCleanup r $
 		Annex.Content.sendAnnex key noop $ \object -> do
-			direct <- isDirect
+			-- This is too broad really, but recvkey normally
+			-- verifies content anyway, so avoid complicating
+			-- it with a local sendAnnex check and rollback.
+			unlocked <- isDirect <||> versionSupportsUnlockedPointers
 			Ssh.rsyncHelper (Just meterupdate)
-				=<< Ssh.rsyncParamsRemote direct r Upload key object file
+				=<< Ssh.rsyncParamsRemote unlocked r Upload key object file
 	| otherwise = error "copying to non-ssh repo not supported"
   where
 	copylocal Nothing = return False
 	copylocal (Just (object, checksuccess)) = do
 		-- The checksuccess action is going to be run in
-		-- the remote's Annex, but it needs access to the current
+		-- the remote's Annex, but it needs access to the local
 		-- Annex monad's state.
 		checksuccessio <- Annex.withCurrentState checksuccess
 		params <- Ssh.rsyncParams r Upload
@@ -669,10 +668,15 @@ commitOnCleanup r a = go `after` a
 						toCommand shellparams
 
 wantHardLink :: Annex Bool
-wantHardLink = (annexHardLink <$> Annex.getGitConfig) <&&> (not <$> isDirect)
+wantHardLink = (annexHardLink <$> Annex.getGitConfig)
+	-- Not direct mode files because they can be modified at any time.
+	<&&> (not <$> isDirect)
+	-- Not unlocked files that are hard linked in the work tree,
+	-- because they can be modified at any time.
+	<&&> (not <$> annexThin <$> Annex.getGitConfig)
 
 -- Copies from src to dest, updating a meter. If the copy finishes
--- successfully, calls a final check action, which must also success, or
+-- successfully, calls a final check action, which must also succeed, or
 -- returns false.
 --
 -- If either the remote or local repository wants to use hard links,
@@ -688,7 +692,6 @@ mkCopier :: Bool -> [CommandParam] -> Annex Copier
 mkCopier remotewanthardlink rsyncparams = do
 	let copier = \src dest p check -> unVerified $
 		rsyncOrCopyFile rsyncparams src dest p <&&> check
-#ifndef mingw32_HOST_OS
 	localwanthardlink <- wantHardLink
 	let linker = \src dest -> createLink src dest >> return True
 	ifM (pure (remotewanthardlink || localwanthardlink) <&&> not <$> isDirect)
@@ -699,6 +702,3 @@ mkCopier remotewanthardlink rsyncparams = do
 				)
 		, return copier
 		)
-#else
-	return $ if remotewanthardlink then copier else copier
-#endif

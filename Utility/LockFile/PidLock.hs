@@ -31,11 +31,12 @@ import System.IO
 import System.Posix
 import Data.Maybe
 import Data.List
-import Control.Applicative
 import Network.BSD
 import System.FilePath
 import Data.Hash.MD5
 import System.Directory
+import Control.Applicative
+import Prelude
 
 type LockFile = FilePath
 
@@ -200,7 +201,7 @@ checkInsaneLustre dest = do
 --
 -- Uses a 1 second wait-loop.
 --
--- May wait untie timeout if the lock file is stale and is on a network file
+-- May wait until timeout if the lock file is stale and is on a network file
 -- system, or on a system where the side lock cannot be taken.
 waitLock :: Seconds -> LockFile -> IO LockHandle
 waitLock (Seconds timeout) lockfile = go timeout

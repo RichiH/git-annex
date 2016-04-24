@@ -14,8 +14,8 @@
 
 module Git.FilePath (
 	TopFilePath,
-	fromTopFilePath,
 	getTopFilePath,
+	fromTopFilePath,
 	toTopFilePath,
 	asTopFilePath,
 	InternalGitPath,
@@ -31,11 +31,11 @@ import qualified System.FilePath.Posix
 
 {- A FilePath, relative to the top of the git repository. -}
 newtype TopFilePath = TopFilePath { getTopFilePath :: FilePath }
-	deriving (Show)
+	deriving (Show, Eq, Ord)
 
-{- Returns an absolute FilePath. -}
+{- Path to a TopFilePath, within the provided git repo. -}
 fromTopFilePath :: TopFilePath -> Git.Repo -> FilePath
-fromTopFilePath p repo = absPathFrom (repoPath repo) (getTopFilePath p)
+fromTopFilePath p repo = combine (repoPath repo) (getTopFilePath p)
 
 {- The input FilePath can be absolute, or relative to the CWD. -}
 toTopFilePath :: FilePath -> Git.Repo -> IO TopFilePath

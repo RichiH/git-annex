@@ -10,10 +10,10 @@ files they act on.
 Arbitrarily complicated expressions can be built using these options.
 For example:
 
-	--exclude '*.mp3' --and --not -( --in=usbdrive --or --in=archive -)
+	--include='*.mp3' --and -( --in=usbdrive --or --in=archive -)
 
-The above example prevents git-annex from working on mp3 files whose
-file contents are present at either of two repositories.
+The above example makes git-annex work on only mp3 files that are present
+in either of two repositories.
 
 # OPTIONS
 
@@ -114,6 +114,15 @@ file contents are present at either of two repositories.
   Matches only files that have a metadata field attached with a value that
   matches the glob. The values of metadata fields are matched case
   insensitively.
+
+* `--metadata field<number` / `--metadata field>number`
+* `--metadata field<=number` / `--metadata field>=number`
+
+  Matches only files that have a metadata field attached with a value that
+  is a number and is less than or greater than the specified number.
+
+  (Note that you will need to quote the second parameter to avoid
+  the shell doing redirection.)
 
 * `--want-get`
 

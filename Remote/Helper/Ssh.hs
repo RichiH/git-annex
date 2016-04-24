@@ -7,7 +7,7 @@
 
 module Remote.Helper.Ssh where
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import qualified Git
 import qualified Git.Url
@@ -15,7 +15,6 @@ import Annex.UUID
 import Annex.Ssh
 import CmdLine.GitAnnexShell.Fields (Field, fieldName)
 import qualified CmdLine.GitAnnexShell.Fields as Fields
-import Types.Key
 import Remote.Helper.Messages
 import Messages.Progress
 import Utility.Metered
@@ -126,10 +125,13 @@ rsyncHelper m params = do
 {- Generates rsync parameters that ssh to the remote and asks it
  - to either receive or send the key's content. -}
 rsyncParamsRemote :: Bool -> Remote -> Direction -> Key -> FilePath -> AssociatedFile -> Annex [CommandParam]
-rsyncParamsRemote direct r direction key file afile = do
+rsyncParamsRemote unlocked r direction key file afile = do
 	u <- getUUID
 	let fields = (Fields.remoteUUID, fromUUID u)
-		: (Fields.direct, if direct then "1" else "")
+		: (Fields.unlocked, if unlocked then "1" else "")
+		-- Send direct field for unlocked content, for backwards
+		-- compatability.
+		: (Fields.direct, if unlocked then "1" else "")
 		: maybe [] (\f -> [(Fields.associatedFile, f)]) afile
 	Just (shellcmd, shellparams) <- git_annex_shell (repo r)
 		(if direction == Download then "sendkey" else "recvkey")

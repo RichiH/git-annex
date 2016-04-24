@@ -12,19 +12,17 @@ module Command.Info where
 import "mtl" Control.Monad.State.Strict
 import qualified Data.Map.Strict as M
 import Text.JSON
-import Data.Tuple
 import Data.Ord
 
-import Common.Annex
+import Command
 import qualified Git
 import qualified Annex
 import qualified Remote
 import qualified Types.Remote as Remote
-import Command
 import Utility.DataUnits
 import Utility.DiskFree
 import Annex.Content
-import Types.Key
+import Annex.UUID
 import Logs.UUID
 import Logs.Trust
 import Logs.Location
@@ -87,6 +85,7 @@ cmd = noCommit $ withGlobalOptions (jsonOption : annexedMatchingOptions) $
 data InfoOptions = InfoOptions
 	{ infoFor :: CmdParams
 	, bytesOption :: Bool
+	, batchOption :: BatchMode
 	}
 
 optParser :: CmdParamsDesc -> Parser InfoOptions
@@ -96,9 +95,12 @@ optParser desc = InfoOptions
 		( long "bytes"
 		<> help "display file sizes in bytes"
 		)
+	<*> parseBatchOption
 
 seek :: InfoOptions -> CommandSeek
-seek o = withWords (start o) (infoFor o)
+seek o = case batchOption o of
+	NoBatch -> withWords (start o) (infoFor o)
+	Batch -> batchInput Right (itemInfo o)
 
 start :: InfoOptions -> [String] -> CommandStart
 start o [] = do
@@ -110,6 +112,9 @@ start o ps = do
 
 globalInfo :: InfoOptions -> Annex ()
 globalInfo o = do
+	u <- getUUID
+	whenM ((==) DeadTrusted <$> lookupTrust u) $
+		earlyWarning "Warning: This repository is currently marked as dead."
 	stats <- selStats global_fast_stats global_slow_stats
 	showCustom "info" $ do
 		evalStateT (mapM_ showStat stats) (emptyStatInfo o)
@@ -126,11 +131,18 @@ itemInfo o p = ifM (isdir p)
 				v' <- Remote.nameToUUID' p
 				case v' of
 					Right u -> uuidInfo o u
-					Left _ -> ifAnnexed p (fileInfo o p) noinfo
+					Left _ -> ifAnnexed p 
+						(fileInfo o p)
+						(noInfo p)
 	)
   where
 	isdir = liftIO . catchBoolIO . (isDirectory <$$> getFileStatus)
-	noinfo = error $ p ++ " is not a directory or an annexed file or a remote or a uuid"
+
+noInfo :: String -> Annex ()
+noInfo s = do
+	showStart "info" s
+	showNote $ "not a directory or an annexed file or a remote or a uuid"
+	showEndFail
 
 dirInfo :: InfoOptions -> FilePath -> Annex ()
 dirInfo o dir = showCustom (unwords ["info", dir]) $ do
@@ -403,12 +415,9 @@ disk_size = simpleStat "available local disk space" $
 
 backend_usage :: Stat
 backend_usage = stat "backend usage" $ json fmt $
-	calc
-		<$> (backendsKeys <$> cachedReferencedData)
-		<*> (backendsKeys <$> cachedPresentData)
+	toJSObject . sort . M.toList . backendsKeys <$> cachedReferencedData
   where
-	calc x y = sort $ M.toList $ M.unionWith (+) x y
-	fmt = multiLine . map (\(n, b) -> b ++ ": " ++ show n) . map swap
+	fmt = multiLine . map (\(b, n) -> b ++ ": " ++ show n) . fromJSObject
 
 numcopies_stats :: Stat
 numcopies_stats = stat "numcopies stats" $ json fmt $
@@ -429,7 +438,7 @@ reposizes_stats = stat desc $ nojson $ do
 	let maxlen = maximum (map (length . snd) l)
 	descm <- lift uuidDescriptions
 	-- This also handles json display.
-	s <- lift $ prettyPrintUUIDsWith (Just "size") desc descm $
+	s <- lift $ prettyPrintUUIDsWith (Just "size") desc descm (Just . show) $
 		map (\(u, sz) -> (u, Just $ mkdisp sz maxlen)) l
 	return $ countRepoList (length l) s
   where

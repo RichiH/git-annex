@@ -11,9 +11,9 @@ import System.Posix.Types
 import Data.Char
 import Data.Default
 
-import Common.Annex
-import Types.Key
+import Annex.Common
 import Annex.Content
+import Annex.Link
 import Logs.Presence
 import qualified Annex.Queue
 import qualified Git
@@ -54,14 +54,14 @@ upgrade = do
 	ifM (fromRepo Git.repoIsLocalBare)
 		( do
 			moveContent
-			setVersion supportedVersion
+			setVersion latestVersion
 		, do
 			moveContent
 			updateSymlinks
 			moveLocationLogs
 	
 			Annex.Queue.flush
-			setVersion supportedVersion
+			setVersion latestVersion
 		)
 	
 	Upgrade.V2.upgrade

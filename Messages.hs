@@ -31,11 +31,12 @@ module Messages (
 	showHeader,
 	showRaw,
 	setupConsole,
-	setConsoleEncoding,
 	enableDebugOutput,
 	disableDebugOutput,
 	debugEnabled,
 	commandProgressDisabled,
+	outputMessage,
+	implicitMessage,
 ) where
 
 import Text.JSON
@@ -53,12 +54,12 @@ import Types.Key
 import qualified Annex
 
 showStart :: String -> FilePath -> Annex ()
-showStart command file = outputMessage (JSON.start command $ Just file) $
+showStart command file = outputMessage (JSON.start command (Just file) Nothing) $
 	command ++ " " ++ file ++ " "
 
 showStart' :: String -> Key -> Maybe FilePath -> Annex ()
-showStart' command key afile = showStart command $
-	fromMaybe (key2file key) afile
+showStart' command key afile = outputMessage (JSON.start command afile (Just key)) $
+	command ++ " " ++ fromMaybe (key2file key) afile ++ " "
 
 showNote :: String -> Annex ()
 showNote s = outputMessage (JSON.note s) $ "(" ++ s ++ ") "
@@ -165,7 +166,7 @@ showFullJSON v = withOutputType $ liftIO . go
  -}
 showCustom :: String -> Annex Bool -> Annex ()
 showCustom command a = do
-	outputMessage (JSON.start command Nothing) ""
+	outputMessage (JSON.start command Nothing Nothing) ""
 	r <- a
 	outputMessage (JSON.end r) ""
 
@@ -182,13 +183,11 @@ setupConsole = do
 		<*> pure preciseLogFormatter
 	updateGlobalLogger rootLoggerName (setLevel NOTICE . setHandlers [s])
 	setConsoleEncoding
-
-{- This avoids ghc's output layer crashing on invalid encoded characters in
- - filenames when printing them out. -}
-setConsoleEncoding :: IO ()
-setConsoleEncoding = do
-	fileEncoding stdout
-	fileEncoding stderr
+	{- Force output to be line buffered. This is normally the case when
+	 - it's connected to a terminal, but may not be when redirected to
+	 - a file or a pipe. -}
+	hSetBuffering stdout LineBuffering
+	hSetBuffering stderr LineBuffering
 
 {- Log formatter with precision into fractions of a second. -}
 preciseLogFormatter :: LogFormatter a
@@ -213,4 +212,10 @@ commandProgressDisabled = withOutputType $ \t -> return $ case t of
 	QuietOutput -> True
 	JSONOutput -> True
 	NormalOutput -> False
-	ConcurrentOutput _ -> True
+	ConcurrentOutput {} -> True
+
+{- Use to show a message that is displayed implicitly, and so might be
+ - disabled when running a certian command that needs more control over its
+ - output. -}
+implicitMessage :: Annex () -> Annex ()
+implicitMessage = whenM (implicitMessages <$> Annex.getState Annex.output)

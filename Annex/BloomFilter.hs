@@ -7,7 +7,7 @@
 
 module Annex.BloomFilter where
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import Utility.Bloom
 
@@ -49,5 +49,5 @@ genBloomFilter populate = do
   where
 	lift = liftIO . stToIO
 
-bloomFilter :: Hashable v => [v] -> Bloom v -> [v]
+bloomFilter :: [v] -> Bloom v -> [v]
 bloomFilter l bloom = filter (\v -> v `notElemB` bloom) l

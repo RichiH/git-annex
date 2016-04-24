@@ -22,9 +22,6 @@ buildFlags = filter (not . null)
 #else
 #warning Building without the webapp. You probably need to install Yesod..
 #endif
-#ifdef WITH_WEBAPP_SECURE
-	, "Webapp-secure"
-#endif
 #ifdef WITH_PAIRING
 	, "Pairing"
 #else
@@ -37,6 +34,12 @@ buildFlags = filter (not . null)
 #endif
 #ifdef WITH_S3
 	, "S3"
+#if MIN_VERSION_aws(0,10,6)
+		++ "(multipartupload)"
+#endif
+#if MIN_VERSION_aws(0,13,0)
+		++ "(storageclasses)"
+#endif
 #else
 #warning Building without S3.
 #endif
@@ -70,31 +73,17 @@ buildFlags = filter (not . null)
 #else
 #warning Building without ConcurrentOutput
 #endif
-#ifdef WITH_DNS
-	, "DNS"
-#endif
-#ifdef WITH_FEED
-	, "Feeds"
-#else
-#warning Building without Feeds.
-#endif
-#ifdef WITH_QUVI
-	, "Quvi"
-#else
-#warning Building without quvi.
-#endif
-#ifdef WITH_TDFA
-	, "TDFA"
-#endif
 #ifdef WITH_TORRENTPARSER
 	, "TorrentParser"
 #endif
-#ifdef WITH_DATABASE
-	, "Database"
-#else
-#warning Building without Database support
+#ifdef WITH_MAGICMIME
+	, "MagicMime"
 #endif
 #ifdef WITH_EKG
 	, "EKG"
 #endif
+	-- Always enabled now, but users may be used to seeing these flags
+	-- listed.
+	, "Feeds"
+	, "Quvi"
 	]

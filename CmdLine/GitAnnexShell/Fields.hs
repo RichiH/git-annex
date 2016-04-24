@@ -7,7 +7,7 @@
 
 module CmdLine.GitAnnexShell.Fields where
 
-import Common.Annex
+import Annex.Common
 import qualified Annex
 import Git.FilePath
 
@@ -34,6 +34,9 @@ associatedFile = Field "associatedfile" $ \f ->
 
 direct :: Field
 direct = Field "direct" $ \f -> f == "1"
+
+unlocked :: Field
+unlocked = Field "unlocked" $ \f -> f == "1"
 
 autoInit :: Field
 autoInit = Field "autoinit" $ \f -> f == "1"

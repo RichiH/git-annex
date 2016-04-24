@@ -7,7 +7,6 @@
 
 module Command.MetaData where
 
-import Common.Annex
 import Command
 import Annex.MetaData
 import Logs.MetaData
@@ -47,10 +46,14 @@ optParser desc = MetaDataOptions
 			( long "tag" <> short 't' <> metavar "TAG"
 			<> help "set a tag"
 			))
-		<|> (AddMeta tagMetaField . mkMetaValue (CurrentlySet False) <$> strOption
+		<|> (DelMeta tagMetaField . Just . toMetaValue <$> strOption
 			( long "untag" <> short 'u' <> metavar "TAG"
 			<> help "remove a tag"
 			))
+		<|> option (eitherReader (\f -> DelMeta <$> mkMetaField f <*> pure Nothing))
+			( long "remove"  <> short 'r' <> metavar "FIELD"
+			<> help "remove all values of a field"
+			)
 
 seek :: MetaDataOptions -> CommandSeek
 seek o = do
