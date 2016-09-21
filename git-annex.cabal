@@ -211,7 +211,7 @@ Executable git-annex
      wai, wai-extra,
      blaze-builder, crypto-api, clientsession,
      template-haskell,
-     shakespeare (>= 2.0.0),
+     shakespeare, hamlet,
      securemem,
      byteable
     CPP-Options: -DWITH_WEBAPP
